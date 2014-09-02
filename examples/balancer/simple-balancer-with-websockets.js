@@ -1,5 +1,5 @@
 /*
-  latent-proxy.js: Example of proxying over HTTP with latency
+  simple-balancer.js: Example of a simple round robin balancer for websockets
 
   Copyright (c) Nodejitsu 2013
 
@@ -24,31 +24,61 @@
 
 */
 
-var util = require('util'),
-    colors = require('colors'),
-    http = require('http'),
+var http = require('http'),
     httpProxy = require('../../lib/http-proxy');
 
 //
-// Http Proxy Server with Latency
+// A simple round-robin load balancing strategy.
+// 
+// First, list the servers you want to use in your rotation.
 //
-var proxy = httpProxy.createProxyServer();
-http.createServer(function (req, res) {
-  setTimeout(function () {
-    proxy.web(req, res, {
-      target: 'http://localhost:9008'
-    });
-  }, 500);
-}).listen(8008);
+var addresses = [
+  {
+    host: 'ws1.0.0.0',
+    port: 80
+  },
+  {
+    host: 'ws2.0.0.0',
+    port: 80
+  }
+];
 
 //
-// Target Http Server
+// Create a HttpProxy object for each target
 //
-http.createServer(function (req, res) {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.write('request successfully proxied to: ' + req.url + '\n' + JSON.stringify(req.headers, true, 2));
-  res.end();
-}).listen(9008);
 
-util.puts('http proxy server '.blue + 'started '.green.bold + 'on port '.blue + '8008 '.yellow + 'with latency'.magenta.underline);
-util.puts('http server '.blue + 'started '.green.bold + 'on port '.blue + '9008 '.yellow);
+var proxies = addresses.map(function (target) {
+  return new httpProxy.createProxyServer({
+    target: target
+  });
+});
+
+//
+// Get the proxy at the front of the array, put it at the end and return it
+// If you want a fancier balancer, put your code here
+//
+
+function nextProxy() {
+  var proxy = proxies.shift();
+  proxies.push(proxy);
+  return proxy;
+}
+
+// 
+// Get the 'next' proxy and send the http request 
+//
+
+var server = http.createServer(function (req, res) {    
+  nextProxy().web(req, res);
+});
+
+// 
+// Get the 'next' proxy and send the upgrade request 
+//
+
+server.on('upgrade', function (req, socket, head) {
+  nextProxy().ws(req, socket, head);
+});
+
+server.listen(8001);
+  
